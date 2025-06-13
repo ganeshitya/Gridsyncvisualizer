@@ -1,7 +1,6 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, lfilter
 
 # Constants
 fs = 1000  # sampling frequency
@@ -17,39 +16,35 @@ noise_level = st.slider("Noise Level", 0.0, 0.5, 0.05)
 # Generate noisy grid voltage
 grid_signal = np.sin(2 * np.pi * freq_grid * t) + noise_level * np.random.randn(len(t))
 
-# Butterworth filter for SRF-PLL
-def lowpass_filter(data, cutoff=20, fs=1000, order=2):
-    b, a = butter(order, cutoff / (0.5 * fs), btype='low')
-    return lfilter(b, a, data)
+# Helper: Moving average low-pass filter
+def lowpass_moving_avg(data, window=20):
+    return np.convolve(data, np.ones(window)/window, mode='same')
 
-# PLL: Basic sinusoidal tracking
+# PLL and SRF-PLL logic
 if algorithm == "PLL":
     pll_output = np.sin(2 * np.pi * 50 * t)
 
-# SRF-PLL: Using v_alpha and Hilbert transform for v_beta
 elif algorithm == "SRF-PLL":
-    # α-β transformation: v_beta = Hilbert(v_alpha)
-    from scipy.signal import hilbert
+    # Approximate beta (90° shifted version of alpha)
     v_alpha = grid_signal
-    v_beta = np.imag(hilbert(v_alpha))
-    
-    theta = np.zeros(len(t))
-    freq_est = 2 * np.pi * 50
-    Kp, Ki = 200, 10000  # SRF-PLL gains
-    
+    v_beta = np.sin(2 * np.pi * freq_grid * t + np.pi / 2)
+
+    theta = np.zeros_like(t)
+    freq = 2 * np.pi * 50  # target frequency in rad/s
+    Kp, Ki = 100, 2000     # control loop gains
     integrator = 0
+
     for i in range(1, len(t)):
-        # Park Transformation (q-axis extraction)
         v_q = -v_alpha[i] * np.sin(theta[i-1]) + v_beta[i] * np.cos(theta[i-1])
         integrator += Ki * v_q / fs
         d_theta = Kp * v_q + integrator
         theta[i] = theta[i-1] + d_theta / fs
-    
+
     pll_output = np.sin(theta)
 
-# Phase error
-def phase_diff(a, b):
-    return np.unwrap(np.angle(np.exp(1j*a) / np.exp(1j*b)))
+# Phase error estimation
+def phase_diff(phase1, phase2):
+    return np.unwrap(phase1 - phase2)
 
 true_phase = 2 * np.pi * freq_grid * t
 measured_phase = 2 * np.pi * 50 * t if algorithm == "PLL" else theta
